@@ -113,12 +113,12 @@ export default function Home() {
             <div className="relative p-8 sm:p-10 lg:p-12">
               <div className="absolute inset-0 bg-[linear-gradient(135deg,rgba(56,189,248,0.18),transparent_45%,rgba(34,197,94,0.12))]" />
               <div className="relative space-y-8">
-                <div className="inline-flex items-center rounded-full border border-cyan-300/20 bg-cyan-300/10 px-4 py-2 text-sm text-cyan-100">
+                <div tabIndex={2} className="inline-flex items-center rounded-full border border-cyan-300/20 bg-cyan-300/10 px-4 py-2 text-sm text-cyan-100 focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:ring-offset-2 focus:ring-offset-slate-950 rounded-lg">
                   Lector de texto con voz en español
                 </div>
 
                 <div className="space-y-4">
-                  <h1 className="max-w-xl text-4xl font-semibold tracking-tight text-white sm:text-5xl">
+                  <h1 tabIndex={1} className="max-w-xl text-4xl font-semibold tracking-tight text-white sm:text-5xl focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:ring-offset-2 focus:ring-offset-slate-950 rounded-lg">
                     Toca la pantalla y toma una foto al texto.
                   </h1>
                   <p className="max-w-xl text-base leading-7 text-slate-300 sm:text-lg">
