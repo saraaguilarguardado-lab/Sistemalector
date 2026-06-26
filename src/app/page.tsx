@@ -4,9 +4,20 @@ import { useEffect, useRef, useState } from "react";
 import Tesseract from "tesseract.js";
 
 const MAX_IMAGE_SIDE = 2200;
+const WHITELIST_CARACTERES = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÁÉÍÓÚÜÑáéíóúüñ0123456789.,;:¡!¿?()'\"/-\n ";
 
 function normalizarTextoOCR(texto: string) {
   return texto
+    .split("\n")
+    .map((linea) => linea.replace(/[|_~=\[\]{}<>*#+@^\\]/g, " ").trim())
+    .filter((linea) => {
+      if (!linea) return false;
+
+      const letras = (linea.match(/[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]/g) || []).length;
+      const signosRuido = (linea.match(/[|_~=\[\]{}<>*#+@^\\]/g) || []).length;
+      return letras >= 3 && signosRuido <= 2;
+    })
+    .join("\n")
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .replace(/[ \t]{2,}/g, " ")
@@ -205,14 +216,16 @@ export default function Home() {
     try {
       const imagenProcesada = await prepararImagenParaOCR(archivo);
 
-      worker = await Tesseract.createWorker("spa", Tesseract.OEM.LSTM_ONLY, {
+      worker = await Tesseract.createWorker("spa+eng", Tesseract.OEM.LSTM_ONLY, {
         logger: (mensaje) => console.log(mensaje),
       });
 
       await worker.setParameters({
-        tessedit_pageseg_mode: Tesseract.PSM.SINGLE_BLOCK,
+        tessedit_pageseg_mode: Tesseract.PSM.SPARSE_TEXT_OSD,
         preserve_interword_spaces: "1",
         user_defined_dpi: "300",
+        tessedit_char_whitelist: WHITELIST_CARACTERES,
+        tessedit_char_blacklist: "|_~=[]{}<>*#+@^\\",
       });
 
       const resultado = await worker.recognize(
