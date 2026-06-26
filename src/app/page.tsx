@@ -3,6 +3,132 @@
 import { useEffect, useRef, useState } from "react";
 import Tesseract from "tesseract.js";
 
+const MAX_IMAGE_SIDE = 2200;
+
+function normalizarTextoOCR(texto: string) {
+  return texto
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
+function calcularUmbralOtsu(histograma: number[], totalPixeles: number) {
+  let suma = 0;
+  for (let i = 0; i < 256; i += 1) {
+    suma += i * histograma[i];
+  }
+
+  let sumaFondo = 0;
+  let pesoFondo = 0;
+  let varianzaMaxima = 0;
+  let umbral = 140;
+
+  for (let i = 0; i < 256; i += 1) {
+    pesoFondo += histograma[i];
+    if (pesoFondo === 0) continue;
+
+    const pesoFrente = totalPixeles - pesoFondo;
+    if (pesoFrente === 0) break;
+
+    sumaFondo += i * histograma[i];
+    const mediaFondo = sumaFondo / pesoFondo;
+    const mediaFrente = (suma - sumaFondo) / pesoFrente;
+
+    const diferencia = mediaFondo - mediaFrente;
+    const varianzaEntreClases = pesoFondo * pesoFrente * diferencia * diferencia;
+
+    if (varianzaEntreClases > varianzaMaxima) {
+      varianzaMaxima = varianzaEntreClases;
+      umbral = i;
+    }
+  }
+
+  return umbral;
+}
+
+async function cargarImagenArchivo(archivo: File) {
+  if (typeof window !== "undefined" && "createImageBitmap" in window) {
+    try {
+      return await createImageBitmap(archivo, {
+        imageOrientation: "from-image",
+      } as ImageBitmapOptions);
+    } catch {
+      // Fallback a <img> cuando createImageBitmap no soporta esta opción.
+    }
+  }
+
+  const objectUrl = URL.createObjectURL(archivo);
+  try {
+    return await new Promise<HTMLImageElement>((resolve, reject) => {
+      const imagen = new Image();
+      imagen.onload = () => resolve(imagen);
+      imagen.onerror = () => reject(new Error("No se pudo cargar la imagen."));
+      imagen.src = objectUrl;
+    });
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+async function prepararImagenParaOCR(archivo: File) {
+  const imagen = await cargarImagenArchivo(archivo);
+  const anchoOriginal = "width" in imagen ? imagen.width : 0;
+  const altoOriginal = "height" in imagen ? imagen.height : 0;
+
+  if (anchoOriginal === 0 || altoOriginal === 0) {
+    throw new Error("No fue posible leer el tamaño de la imagen.");
+  }
+
+  const ladoMayor = Math.max(anchoOriginal, altoOriginal);
+  const escalaBase = ladoMayor > MAX_IMAGE_SIDE ? MAX_IMAGE_SIDE / ladoMayor : 1;
+  const escalaMejora = ladoMayor < 1200 ? 1.8 : 1.2;
+  const escala = Math.min(2, escalaBase * escalaMejora);
+
+  const ancho = Math.max(1, Math.round(anchoOriginal * escala));
+  const alto = Math.max(1, Math.round(altoOriginal * escala));
+
+  const canvas = document.createElement("canvas");
+  canvas.width = ancho;
+  canvas.height = alto;
+
+  const contexto = canvas.getContext("2d", { willReadFrequently: true });
+  if (!contexto) {
+    throw new Error("No se pudo preparar la imagen para OCR.");
+  }
+
+  contexto.drawImage(imagen, 0, 0, ancho, alto);
+
+  if ("close" in imagen && typeof imagen.close === "function") {
+    imagen.close();
+  }
+
+  const imageData = contexto.getImageData(0, 0, ancho, alto);
+  const { data } = imageData;
+  const totalPixeles = ancho * alto;
+  const histograma = new Array<number>(256).fill(0);
+  const grises = new Uint8Array(totalPixeles);
+
+  for (let i = 0, indicePixel = 0; i < data.length; i += 4, indicePixel += 1) {
+    const gris = Math.round(data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114);
+    grises[indicePixel] = gris;
+    histograma[gris] += 1;
+  }
+
+  const umbral = calcularUmbralOtsu(histograma, totalPixeles);
+
+  for (let i = 0, indicePixel = 0; i < data.length; i += 4, indicePixel += 1) {
+    const valor = grises[indicePixel] > umbral ? 255 : 0;
+    data[i] = valor;
+    data[i + 1] = valor;
+    data[i + 2] = valor;
+    data[i + 3] = 255;
+  }
+
+  contexto.putImageData(imageData, 0, 0);
+  return canvas;
+}
+
 function hablar(texto: string, opciones: { rate?: number; pitch?: number } = {}) {
   if (typeof window === "undefined") return;
 
@@ -74,13 +200,28 @@ export default function Home() {
     setTextoDetectado("");
     hablar("Leyendo la imagen, por favor espera.");
 
+    let worker: Awaited<ReturnType<typeof Tesseract.createWorker>> | null = null;
+
     try {
-      const resultado = await Tesseract.recognize(archivo, "spa", {
+      const imagenProcesada = await prepararImagenParaOCR(archivo);
+
+      worker = await Tesseract.createWorker("spa", Tesseract.OEM.LSTM_ONLY, {
         logger: (mensaje) => console.log(mensaje),
       });
 
-      const text = resultado.data.text;
-      const textoLimpio = text.trim();
+      await worker.setParameters({
+        tessedit_pageseg_mode: Tesseract.PSM.SINGLE_BLOCK,
+        preserve_interword_spaces: "1",
+        user_defined_dpi: "300",
+      });
+
+      const resultado = await worker.recognize(
+        imagenProcesada,
+        { rotateAuto: true },
+        { text: true }
+      );
+
+      const textoLimpio = normalizarTextoOCR(resultado.data.text);
 
       if (textoLimpio === "") {
         setEstado("No encontré texto en la imagen.");
@@ -90,14 +231,17 @@ export default function Home() {
       }
 
       setEstado("Texto encontrado.");
-      setTextoDetectado(text);
-      leerTextoPausado(text);
+      setTextoDetectado(textoLimpio);
+      leerTextoPausado(textoLimpio);
     } catch (error) {
       setEstado("Error al procesar la imagen.");
       setTextoDetectado("");
       hablar("Hubo un error al leer la imagen.");
       console.error(error);
     } finally {
+      if (worker) {
+        await worker.terminate();
+      }
       setLeyendo(false);
     }
   };
