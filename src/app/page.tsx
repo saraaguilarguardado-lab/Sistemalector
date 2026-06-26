@@ -243,7 +243,7 @@ export default function Home() {
   const [leyendo, setLeyendo] = useState(false);
 
   useEffect(() => {
-    hablar("Bienvenido. Toca la pantalla en cualquier parte para tomar una foto al texto.");
+    hablar("Bienvenido. Toca la pantalla para tomar una foto o elegir una imagen con texto.");
   }, []);
 
   const abrirCamara = () => {
@@ -344,7 +344,7 @@ export default function Home() {
 
                 <div className="space-y-4">
                   <h1 tabIndex={1} className="max-w-xl text-4xl font-semibold tracking-tight text-white sm:text-5xl focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:ring-offset-2 focus:ring-offset-slate-950 rounded-lg">
-                    Toca la pantalla y toma una foto al texto.
+                    Toca la pantalla y toma o elige una imagen con texto.
                   </h1>
                   <p className="max-w-xl text-base leading-7 text-slate-300 sm:text-lg">
                     El lector usa OCR para detectar texto en una imagen y luego lo reproduce con voz pausada en español.
@@ -360,13 +360,13 @@ export default function Home() {
                     }}
                     className="rounded-full bg-cyan-400 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:bg-cyan-300"
                   >
-                    Tomar foto
+                    Tomar o elegir imagen
                   </button>
                   <button
                     type="button"
                     onClick={(event) => {
                       event.stopPropagation();
-                      hablar("Toca la pantalla en cualquier parte para tomar una foto al texto.");
+                      hablar("Toca la pantalla para tomar una foto o elegir una imagen con texto.");
                     }}
                     className="rounded-full border border-white/15 bg-white/5 px-5 py-3 text-sm font-semibold text-white transition hover:bg-white/10"
                   >
@@ -419,7 +419,6 @@ export default function Home() {
         ref={inputRef}
         type="file"
         accept="image/*"
-        capture="environment"
         className="hidden"
         onChange={(event) => {
           const archivo = event.target.files?.[0];
