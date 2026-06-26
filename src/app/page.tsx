@@ -5,6 +5,8 @@ import Tesseract from "tesseract.js";
 
 const MAX_IMAGE_SIDE = 2200;
 const WHITELIST_CARACTERES = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÁÉÍÓÚÜÑáéíóúüñ0123456789.,;:¡!¿?()'\"/-\n ";
+const MIN_LINE_CONFIDENCE = 60;
+const MIN_LETTERS_PER_LINE = 4;
 
 function normalizarTextoOCR(texto: string) {
   return texto
@@ -22,6 +24,33 @@ function normalizarTextoOCR(texto: string) {
     .replace(/\n{3,}/g, "\n\n")
     .replace(/[ \t]{2,}/g, " ")
     .trim();
+}
+
+function contarLetras(texto: string) {
+  return (texto.match(/[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]/g) || []).length;
+}
+
+function extraerTextoConfiable(resultado: Awaited<ReturnType<typeof Tesseract.recognize>>["data"]) {
+  const lineas = (resultado.blocks ?? [])
+    .flatMap((bloque) => bloque.paragraphs ?? [])
+    .flatMap((parrafo) => parrafo.lines ?? [])
+    .map((linea) => ({
+      texto: normalizarTextoOCR(linea.text),
+      confianza: linea.confidence ?? 0,
+    }))
+    .filter((linea) => linea.texto && linea.confianza >= MIN_LINE_CONFIDENCE)
+    .filter((linea) => contarLetras(linea.texto) >= MIN_LETTERS_PER_LINE);
+
+  const texto = normalizarTextoOCR(lineas.map((linea) => linea.texto).join("\n"));
+
+  return {
+    texto,
+    confianzaPromedio:
+      lineas.length > 0
+        ? lineas.reduce((suma, linea) => suma + linea.confianza, 0) / lineas.length
+        : 0,
+    lineasValidas: lineas.length,
+  };
 }
 
 function calcularUmbralOtsu(histograma: number[], totalPixeles: number) {
@@ -234,7 +263,15 @@ export default function Home() {
         { text: true }
       );
 
-      const textoLimpio = normalizarTextoOCR(resultado.data.text);
+      const textoConfiable = extraerTextoConfiable(resultado.data);
+      const textoLimpio = textoConfiable.texto || normalizarTextoOCR(resultado.data.text);
+
+      if (textoConfiable.lineasValidas > 0 && textoConfiable.confianzaPromedio < 72) {
+        setEstado("La lectura es demasiado débil. Prueba con otra foto más nítida.");
+        setTextoDetectado("");
+        hablar("La imagen no tiene suficiente nitidez para una lectura confiable. Intenta con más luz y el texto recto.");
+        return;
+      }
 
       if (textoLimpio === "") {
         setEstado("No encontré texto en la imagen.");
