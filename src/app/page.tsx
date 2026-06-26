@@ -4,9 +4,9 @@ import { useEffect, useRef, useState } from "react";
 import Tesseract from "tesseract.js";
 
 const MAX_IMAGE_SIDE = 2200;
-const WHITELIST_CARACTERES = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyzÁÉÍÓÚÜÑáéíóúüñ0123456789.,;:¡!¿?()'\"/-\n ";
 const MIN_LINE_CONFIDENCE = 60;
 const MIN_LETTERS_PER_LINE = 4;
+const MIN_ACCEPTABLE_CONFIDENCE = 70;
 
 function normalizarTextoOCR(texto: string) {
   return texto
@@ -50,6 +50,19 @@ function extraerTextoConfiable(resultado: Awaited<ReturnType<typeof Tesseract.re
         ? lineas.reduce((suma, linea) => suma + linea.confianza, 0) / lineas.length
         : 0,
     lineasValidas: lineas.length,
+  };
+}
+
+function evaluarResultadoOCR(resultado: Awaited<ReturnType<typeof Tesseract.recognize>>["data"]) {
+  const textoConfiable = extraerTextoConfiable(resultado);
+  const textoLimpio = textoConfiable.texto || normalizarTextoOCR(resultado.text);
+  const confianzaBase = textoConfiable.lineasValidas > 0 ? textoConfiable.confianzaPromedio : (resultado.confidence ?? 0);
+
+  return {
+    texto: textoLimpio,
+    confianzaBase,
+    lineasValidas: textoConfiable.lineasValidas,
+    esConfiable: textoLimpio !== "" && confianzaBase >= MIN_ACCEPTABLE_CONFIDENCE,
   };
 }
 
@@ -111,7 +124,7 @@ async function cargarImagenArchivo(archivo: File) {
   }
 }
 
-async function prepararImagenParaOCR(archivo: File) {
+async function prepararImagenParaOCR(archivo: File, opciones: { binarizar: boolean }) {
   const imagen = await cargarImagenArchivo(archivo);
   const anchoOriginal = "width" in imagen ? imagen.width : 0;
   const altoOriginal = "height" in imagen ? imagen.height : 0;
@@ -143,29 +156,32 @@ async function prepararImagenParaOCR(archivo: File) {
     imagen.close();
   }
 
-  const imageData = contexto.getImageData(0, 0, ancho, alto);
-  const { data } = imageData;
-  const totalPixeles = ancho * alto;
-  const histograma = new Array<number>(256).fill(0);
-  const grises = new Uint8Array(totalPixeles);
+  if (opciones.binarizar) {
+    const imageData = contexto.getImageData(0, 0, ancho, alto);
+    const { data } = imageData;
+    const totalPixeles = ancho * alto;
+    const histograma = new Array<number>(256).fill(0);
+    const grises = new Uint8Array(totalPixeles);
 
-  for (let i = 0, indicePixel = 0; i < data.length; i += 4, indicePixel += 1) {
-    const gris = Math.round(data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114);
-    grises[indicePixel] = gris;
-    histograma[gris] += 1;
+    for (let i = 0, indicePixel = 0; i < data.length; i += 4, indicePixel += 1) {
+      const gris = Math.round(data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114);
+      grises[indicePixel] = gris;
+      histograma[gris] += 1;
+    }
+
+    const umbral = calcularUmbralOtsu(histograma, totalPixeles);
+
+    for (let i = 0, indicePixel = 0; i < data.length; i += 4, indicePixel += 1) {
+      const valor = grises[indicePixel] > umbral ? 255 : 0;
+      data[i] = valor;
+      data[i + 1] = valor;
+      data[i + 2] = valor;
+      data[i + 3] = 255;
+    }
+
+    contexto.putImageData(imageData, 0, 0);
   }
 
-  const umbral = calcularUmbralOtsu(histograma, totalPixeles);
-
-  for (let i = 0, indicePixel = 0; i < data.length; i += 4, indicePixel += 1) {
-    const valor = grises[indicePixel] > umbral ? 255 : 0;
-    data[i] = valor;
-    data[i + 1] = valor;
-    data[i + 2] = valor;
-    data[i + 3] = 255;
-  }
-
-  contexto.putImageData(imageData, 0, 0);
   return canvas;
 }
 
@@ -243,40 +259,55 @@ export default function Home() {
     let worker: Awaited<ReturnType<typeof Tesseract.createWorker>> | null = null;
 
     try {
-      const imagenProcesada = await prepararImagenParaOCR(archivo);
+      const imagenOriginal = await prepararImagenParaOCR(archivo, { binarizar: false });
 
       worker = await Tesseract.createWorker("spa+eng", Tesseract.OEM.LSTM_ONLY, {
         logger: (mensaje) => console.log(mensaje),
       });
 
       await worker.setParameters({
-        tessedit_pageseg_mode: Tesseract.PSM.SPARSE_TEXT_OSD,
+        tessedit_pageseg_mode: Tesseract.PSM.AUTO,
         preserve_interword_spaces: "1",
         user_defined_dpi: "300",
-        tessedit_char_whitelist: WHITELIST_CARACTERES,
-        tessedit_char_blacklist: "|_~=[]{}<>*#+@^\\",
       });
 
-      const resultado = await worker.recognize(
-        imagenProcesada,
+      const resultadoOriginal = await worker.recognize(
+        imagenOriginal,
         { rotateAuto: true },
         { text: true }
       );
 
-      const textoConfiable = extraerTextoConfiable(resultado.data);
-      const textoLimpio = textoConfiable.texto || normalizarTextoOCR(resultado.data.text);
+      const evaluacionOriginal = evaluarResultadoOCR(resultadoOriginal.data);
 
-      if (textoConfiable.lineasValidas > 0 && textoConfiable.confianzaPromedio < 72) {
-        setEstado("La lectura es demasiado débil. Prueba con otra foto más nítida.");
-        setTextoDetectado("");
-        hablar("La imagen no tiene suficiente nitidez para una lectura confiable. Intenta con más luz y el texto recto.");
-        return;
+      let textoLimpio = evaluacionOriginal.texto;
+      let confianzaFinal = evaluacionOriginal.confianzaBase;
+
+      if (!evaluacionOriginal.esConfiable) {
+        const imagenBinarizada = await prepararImagenParaOCR(archivo, { binarizar: true });
+        const resultadoBinarizado = await worker.recognize(
+          imagenBinarizada,
+          { rotateAuto: true },
+          { text: true }
+        );
+
+        const evaluacionBinarizada = evaluarResultadoOCR(resultadoBinarizado.data);
+        if (evaluacionBinarizada.confianzaBase > evaluacionOriginal.confianzaBase) {
+          textoLimpio = evaluacionBinarizada.texto;
+          confianzaFinal = evaluacionBinarizada.confianzaBase;
+        }
       }
 
       if (textoLimpio === "") {
         setEstado("No encontré texto en la imagen.");
         setTextoDetectado("");
         hablar("No pude encontrar ningún texto en la imagen. Inténtalo de nuevo.");
+        return;
+      }
+
+      if (confianzaFinal < MIN_ACCEPTABLE_CONFIDENCE) {
+        setEstado("La lectura es demasiado débil. Prueba con otra foto más nítida.");
+        setTextoDetectado("");
+        hablar("La imagen no tiene suficiente nitidez para una lectura confiable. Intenta con más luz y el texto recto.");
         return;
       }
 
