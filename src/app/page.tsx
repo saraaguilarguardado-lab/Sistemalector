@@ -104,7 +104,7 @@ export default function Home() {
 
   return (
     <main
-      className="min-h-screen bg-gradient-to-br from-emerald-950 via-green-950 to-slate-950 px-4 py-6 text-white sm:px-6 lg:px-8"
+      className="min-h-screen bg-gradient-to-br from-amber-950 via-yellow-950 to-stone-900 px-4 py-6 text-white sm:px-6 lg:px-8"
       onClick={abrirCamara}
     >
       <div className="mx-auto flex min-h-[calc(100vh-3rem)] w-full max-w-5xl items-center justify-center">
